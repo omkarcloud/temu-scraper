@@ -1,0 +1,10 @@
+services:
+  temu-scraper:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      # Optional — a STICKY proxy in the storefront's country when Temu shows your IP its captcha.
+      # - TEMU_PROXY=http://user:pass@host:port
