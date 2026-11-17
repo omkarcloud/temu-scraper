@@ -40,7 +40,7 @@ def test_search_all_filters():
     ({}, "query", "Missing data"),
     ({"query": "   "}, "query", "Must not be empty"),
     ({"query": "x", "sort": "cheapest"}, "sort", "Must be one of"),
-    ({"query": "x", "page": "10"}, "page", "less than or equal to 9"),
+    ({"query": "x", "page": "19"}, "page", "less than or equal to 18"),
     ({"query": "x", "min_price": "-1"}, "min_price", "greater than or equal to 0"),
     ({"query": "x", "min_price": "20", "max_price": "10"}, "min_price", "must not be greater"),
     ({"query": "x", "min_rating": "5"}, "min_rating", "Must be one of"),
@@ -88,6 +88,10 @@ def test_category_products_schema():
     assert "Missing data" in " ".join(errs["category"])
     errs = errors(schemas.CategoryProductsSchema, {"category": "electronics"})
     assert "category id" in " ".join(errs["category"])
+    # categories page by 40 (9 pages), searches by 20 (18 pages)
+    errs = errors(schemas.CategoryProductsSchema, {"category": "355", "page": "10"})
+    assert "less than or equal to 9" in " ".join(errs["page"])
+    assert schemas.SearchSchema().load({"query": "x", "page": "18"})["page"] == 18
 
 
 def test_categories_list_schema():

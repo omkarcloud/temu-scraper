@@ -39,3 +39,9 @@ TEMU_PAGES_SESSIONS = 1        # kept Chromes per storefront for page 2+ and rev
 def temu_proxy(market="us"):
     """The connection Chrome earns trust on and every request reuses (None = your own IP)."""
     return os.environ.get("TEMU_PROXY") or None
+
+
+# ---- added by the sync: defaults for a direct run ----
+TEMU_MINT_AHEAD = True
+TEMU_MINT_AHEAD_AT = 3
+TEMU_MINT_WAIT = 60

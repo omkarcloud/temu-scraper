@@ -18,12 +18,17 @@ window.__InitialI18nStore__ translation table emptied to {} on 2026-10-26):
                    product_unavailable_gb.html (sold-out page: a US product
                    the UK storefront does not sell, goods.status 7)
   * search page    window.rawData.store on /search_result.html: goodsList
-                   (40 cards, camelCase, wrapped in {data}), totalPage,
+                   (camelCase, wrapped in {data}; 20 cards since 2026-11,
+                   40 before, while pageSize still says 40), totalPage,
                    goodsNumAdv, hasSearchResults, filtersStore, cardRecommendWords
-                   fixtures search_wireless_earbuds.html, search_no_results.html
+                   fixtures search_desk_organizer.html (2026-11-07, 20 cards),
+                   search_wireless_earbuds.html (2026-10-24, 40 cards),
+                   search_no_results.html
   * search page N  POST /api/poppy/v1/search (captured by the browser box):
-                   result.data.goods_list (snake_case cards), has_more
-                   fixture search_page2.json
+                   result.data.goods_list (snake_case cards), has_more; one
+                   "See more" loads one page of what page 1 rendered (US 20,
+                   UK 24 since 2026-11; 40 before)
+                   fixture search_page2.json (2026-10-24, 40 cards)
   * category page  window.rawData.store on /<slug>-o3-<id>.html: goodsList,
                    crumbOptList, title, hasResult, categoryData (top level),
                    filtersStore.completeFilter (the "Category" facet = the
@@ -43,11 +48,13 @@ window.__InitialI18nStore__ translation table emptied to {} on 2026-10-26):
 Prices are integers in the currency's minor unit (USD / GBP / CAD cents).
 """
 import json
+import fastjson
 import math
 import re
 from datetime import datetime, timezone
 
 from temu.refs import SITE, absolute, category_link, product_link, store_link
+from scraper_utils.values import num as _float, to_int as _int
 
 _RAW_DATA_RE = re.compile(r"window\.rawData\s*=\s*")
 _DOC_SOURCE_RE = re.compile(r'window\.__DOC_SOURCE__\s*=\s*"(\w+)"')
@@ -123,29 +130,6 @@ def _dig(obj, *path, default=None):
         if obj is None:
             return default
     return obj
-
-
-def _int(value):
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        return int(value)
-    if isinstance(value, str):
-        digits = value.replace(",", "").strip()
-        if re.fullmatch(r"-?[0-9]+", digits):
-            return int(digits)
-    return None
-
-
-def _float(value):
-    if isinstance(value, bool) or value is None:
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
 
 
 def money(minor):
@@ -237,7 +221,7 @@ def _specs(value):
     [{name, value}]; masked keys (Temu blanks some words) give name null."""
     if isinstance(value, str):
         try:
-            value = json.loads(value)
+            value = fastjson.loads(value)
         except ValueError:
             return []
     out = []
@@ -297,7 +281,7 @@ def _card_tags(card):
             raw = _dig(tag, "ext_map", "ranking_list_rich_text")
             if isinstance(raw, str):
                 try:
-                    text = rich_text(snake(json.loads(raw)).get("text_rich"), sep=" ")
+                    text = rich_text(snake(fastjson.loads(raw)).get("text_rich"), sep=" ")
                 except ValueError:
                     text = None
         if text and text not in tags:
@@ -350,9 +334,12 @@ def search_is_empty(store):
     return bool(store) and store.get("hasSearchResults") is False and bool(store.get("contactInfo"))
 
 
-def parse_search_page(store):
-    """Page 1 of a search (server-rendered)."""
+def parse_search_page(store, page_size=None):
+    """Page 1 of a search (server-rendered). A page is Temu's own page: the
+    cards page 1 renders, which is also what each "See more" loads (US 20,
+    UK 24 since 2026-11; 40 before), unless `page_size` says otherwise."""
     cards = parse_cards(store.get("goodsList"))
+    size = page_size or len(cards)
     count_text = str(store.get("goodsNumAdv")) if store.get("goodsNumAdv") not in (None, 0, "0", "") else None
     # goodsNumAdv is exact below 1000 ("53") and "1000+" above. totalPage is
     # not the page count for small results (53 results: totalPage 1 with
@@ -361,11 +348,17 @@ def parse_search_page(store):
     if not cards:
         total_pages, exact = 0, 0
     elif exact is not None:
-        total_pages = total_pages_for(exact, _int(store.get("pageSize")) or len(cards))
+        total_pages = total_pages_for(exact, size)
     else:
-        total_pages = _int(store.get("totalPage"))
+        # "1000+": totalPage counts pages of the store's nominal pageSize (it
+        # says 40 and totalPage 9 while 20 / 24 render per page, 2026-11-07),
+        # so the listing's reach is totalPage x pageSize results
+        nominal = _int(store.get("pageSize")) or size
+        total = _int(store.get("totalPage"))
+        total_pages = total_pages_for(total * nominal, size) if total else None
     return {
         "results": cards,
+        "page_size": size or None,
         "total_pages": total_pages,
         "total_count": exact,
         "count_text": count_text,
@@ -422,6 +415,7 @@ def parse_category_page(store, opt_id):
     return {
         "category": {**current, "path": path},
         "results": cards,
+        "page_size": len(cards) or None,       # Temu's own page (40), as for a search
         "has_next": bool(store.get("hasMore")) and bool(cards),
         "subcategories": parse_subcategories(store),
         "top_categories": parse_top_categories(store),

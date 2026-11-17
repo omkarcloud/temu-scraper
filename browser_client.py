@@ -324,7 +324,7 @@ class ExitPool:
     """One kept, trusted Chrome per storefront (`key`) for the in-page calls.
     `mint` returns the proxy URL to use (None = your own IP)."""
 
-    def __init__(self, site, mint, size=1):
+    def __init__(self, site, mint, size=1, **kwargs):
         self.site = site
         self._mint = mint
         self._lock = threading.Lock()
@@ -375,3 +375,19 @@ class ExitPool:
         with entry["lock"]:
             self._drop(entry)
         return True
+
+
+def accept_language_for(ident):
+    """The Accept-Language the minting browser announced: the identity's own,
+    else the header Chrome builds from the languages it reported (first tag
+    bare, then q=0.9, 0.8, ...), else the one for the proxy it was minted on."""
+    if ident.get("accept_language"):
+        return ident["accept_language"]
+    langs = [t.strip() for t in (ident.get("languages") or []) if isinstance(t, str) and t.strip()]
+    if langs:
+        return ",".join(t if i == 0 else f"{t};q={max(1, 10 - i) / 10:.1f}" for i, t in enumerate(langs))
+    try:
+        import egress
+    except ImportError:             # this repo sends plain US English when the browser named nothing
+        return "en-US,en;q=0.9"
+    return egress.accept_language(ident.get("proxy"))

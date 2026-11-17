@@ -230,9 +230,29 @@ def test_sparse_product_never_crashes():
 
 # ---- search -------------------------------------------------------------------------------
 
+def test_search_page_renders_20_since_2026_11():
+    # a US search renders 20 cards (store pageSize still 40, totalPage 9 of
+    # those): a page is Temu's own page, so 360 results are 18 pages of 20
+    page = P.parse_search_page(store("search_desk_organizer.html"))
+    assert len(page["results"]) == 20 and page["page_size"] == 20
+    assert page["total_pages"] == 18 and page["total_count"] is None
+    assert page["count_text"] == "1000+" and page["has_next"] is True
+    assert all(c["id"] and c["price"] and c["currency"] == "USD" for c in page["results"])
+
+
+def test_uk_search_pages_by_24():
+    # the UK storefront renders (and loads per "See more") 24 (2026-11-07)
+    cards = [{"data": {"goodsId": 601099500000000 + i, "title": "x", "priceInfo": {"price": 100}}} for i in range(24)]
+    page = P.parse_search_page({"goodsList": cards, "goodsNumAdv": "1000+", "totalPage": 9, "hasMore": True,
+                                "pageSize": 40})
+    assert page["page_size"] == 24 and page["total_pages"] == 15 and page["has_next"] is True
+
+
 def test_search_page():
+    # the 2026-10-24 capture, when Temu rendered and loaded 40 per page
     page = P.parse_search_page(store("search_wireless_earbuds.html"))
-    assert len(page["results"]) == 40 and page["total_pages"] == 9 and page["total_count"] is None
+    assert len(page["results"]) == 40 and page["page_size"] == 40
+    assert page["total_pages"] == 9 and page["total_count"] is None
     assert page["count_text"] == "1000+" and page["has_next"] is True
     assert page["related_searches"][:2] == ["bluetooth earbuds", "noise cancellation earbuds"]
     card = page["results"][0]
@@ -262,12 +282,15 @@ def test_signed_listing_pages(name):
 
 
 def test_small_search_counts_its_own_pages():
-    # 53 results: Temu says totalPage 1 with hasMore true (2026-10-24)
-    cards = [{"data": {"goodsId": 601099500000000 + i, "title": "x", "priceInfo": {"price": 100}}} for i in range(40)]
-    small = P.parse_search_page({"goodsList": cards, "goodsNumAdv": "53", "totalPage": 1, "hasMore": True, "pageSize": 40})
-    assert small["total_pages"] == 2 and small["total_count"] == 53 and small["has_next"] is True
-    one = P.parse_search_page({"goodsList": cards[:38], "goodsNumAdv": "38", "totalPage": 1, "hasMore": True, "pageSize": 40})
-    assert one["total_pages"] == 1 and one["total_count"] == 38 and one["has_next"] is False
+    # 53 results: Temu says totalPage 1 with hasMore true (2026-10-24); an
+    # exact count decides the pages, in pages of what Temu renders (20)
+    cards = [{"data": {"goodsId": 601099500000000 + i, "title": "x", "priceInfo": {"price": 100}}} for i in range(20)]
+    small = P.parse_search_page({"goodsList": cards, "goodsNumAdv": "53", "totalPage": 1, "hasMore": True,
+                                 "pageSize": 40})
+    assert small["total_pages"] == 3 and small["total_count"] == 53 and small["has_next"] is True
+    one = P.parse_search_page({"goodsList": cards[:18], "goodsNumAdv": "18", "totalPage": 1, "hasMore": True,
+                               "pageSize": 40})
+    assert one["total_pages"] == 1 and one["total_count"] == 18 and one["has_next"] is False
 
 
 def test_sparse_listings():

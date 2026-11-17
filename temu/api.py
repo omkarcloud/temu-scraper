@@ -12,9 +12,11 @@ the schema's loaded kwargs). Caching happens here (tofler/api.py pattern):
 from cache import cached_call
 from temu import cache_config as ttl
 from temu import fetch, parsers
-from temu.fetch import LISTING_PAGE_SIZE, REVIEWS_PAGE_SIZE
+from temu.fetch import REVIEWS_PAGE_SIZE, page_size
 from temu.refs import category_link, filter_items, store_link
-from temu.schemas import MAX_LISTING_PAGE, MAX_REVIEWS_PAGE
+from temu.schemas import MAX_CATEGORY_PAGE, MAX_REVIEWS_PAGE, MAX_SEARCH_PAGE
+
+MAX_PAGE = {"search": MAX_SEARCH_PAGE, "category": MAX_CATEGORY_PAGE}
 
 # ---- shared product record ------------------------------------------------------------
 
@@ -53,7 +55,8 @@ def _category_first_page(category, filters, country):
 
 def _first_page(kind, ref, filters, country):
     if kind == "search":
-        return cached_call("temu.search_page1", {"query": ref, "filters": filters, "country": country},
+        # .v3: pages are Temu's own page (US 20, UK 24) since 2026-11-07
+        return cached_call("temu.search_page1.v3", {"query": ref, "filters": filters, "country": country},
                            _search_first_page, ttl.SEARCH_CACHE)
     return cached_call("temu.category_page1", {"category": ref, "filters": filters, "country": country},
                        _category_first_page, ttl.CATEGORY_PRODUCTS_CACHE)
@@ -82,15 +85,19 @@ def _listing(kind, ref, filters, country, page):
     return results, has_next, total_pages, first
 
 
-def _pagination(page, per_page, has_next, total_pages, total_count=None):
+def _pagination(kind, first, page, has_next, total_pages, total_count=None):
     # A search below 1000 results has an exact count (and so its pages);
     # above it Temu shows "1000+" with a page count and no total, and a
     # category shows neither: total_count stays null and has_next drives the
     # link. Either way the link stops at the last page the `page` param accepts.
-    total_pages = min(total_pages, MAX_LISTING_PAGE) if total_pages else total_pages
+    # A page is Temu's own page, measured on page 1 (US search 20, UK 24,
+    # category 40).
+    per_page = first.get("page_size") or page_size(kind)
+    max_page = MAX_PAGE[kind]
+    total_pages = min(total_pages, max_page) if total_pages else total_pages
     if total_count is not None:
         return {"page": page, "items_per_page": per_page, "total_pages": total_pages, "total_count": total_count}
-    return {"page": page, "items_per_page": per_page, "has_next": has_next and page < MAX_LISTING_PAGE,
+    return {"page": page, "items_per_page": per_page, "has_next": has_next and page < max_page,
             "total_pages": total_pages, "total_count": None}
 
 
@@ -103,12 +110,13 @@ def _search(query, category, sort, min_price, max_price, min_rating, local_wareh
         "results_count_text": first.get("count_text"),
         "related_searches": first.get("related_searches") or [],
         "results": results,
-        "pagination": _pagination(page, LISTING_PAGE_SIZE, has_next, total_pages, first.get("total_count")),
+        "pagination": _pagination("search", first, page, has_next, total_pages, first.get("total_count")),
     }
 
 
 def products_search(**data):
-    return cached_call("temu.search", data, _search, ttl.SEARCH_CACHE)
+    # .v3: pages are Temu's own page since 2026-11-07 (page 2 under the old maths was empty)
+    return cached_call("temu.search.v3", data, _search, ttl.SEARCH_CACHE)
 
 
 def _category_products(category, sort, min_price, max_price, min_rating, local_warehouse, country, page):
@@ -118,7 +126,7 @@ def _category_products(category, sort, min_price, max_price, min_rating, local_w
         "category": first.get("category") or {"id": category, "name": None, "link": category_link(category), "path": []},
         "country": country,
         "results": results,
-        "pagination": _pagination(page, LISTING_PAGE_SIZE, has_next, None),
+        "pagination": _pagination("category", first, page, has_next, None),
     }
 
 

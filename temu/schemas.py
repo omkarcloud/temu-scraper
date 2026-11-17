@@ -16,10 +16,13 @@ from marshmallow import ValidationError, validates_schema
 from schema_fields import BaseSchema, ChoiceField, Flag, PageField, Price, QueryField, RefField
 from temu import refs
 
-# Temu's own search listing stops at 9 pages of 40 (totalPage); later pages
-# come from the browser box clicking "See more" (one click per page), so the
-# cap keeps a request inside one guest identity's budget.
-MAX_LISTING_PAGE = 9
+# Temu's listings stop at 360 results (totalPage 9 of its nominal 40). A page
+# is Temu's own page: a US search renders and loads 20 at a time since
+# 2026-11 (18 pages), a UK search 24 (15), a category 40 (9). Pages > 1 come
+# from the browser box clicking "See more" (one click per page;
+# recipes/temu_pages.py MAX_TIMES).
+MAX_SEARCH_PAGE = 18
+MAX_CATEGORY_PAGE = 9
 # The reviews modal loads 10 per page, one scroll per page on the box.
 MAX_REVIEWS_PAGE = 10
 
@@ -52,8 +55,6 @@ class _ListingSchema(BaseSchema):
     local_warehouse = Flag(load_default=False, metadata={
         "description": "true: only items that ship from a warehouse in the storefront's country"})
     country = country_field()
-    page = PageField(max_page=MAX_LISTING_PAGE, metadata={
-        "description": f"page of 40 results (1-{MAX_LISTING_PAGE})"})
 
     @validates_schema
     def _price_range(self, data, **kwargs):
@@ -66,11 +67,15 @@ class SearchSchema(_ListingSchema):
     query = QueryField(metadata={"description": "what to search for, e.g. wireless earbuds"})
     category = CategoryRefField(required=False, load_default=None, metadata={
         "description": "optional: only results in this category (id or temu.com category link)"})
+    page = PageField(max_page=MAX_SEARCH_PAGE, metadata={
+        "description": f"page (1-{MAX_SEARCH_PAGE}) of Temu's own size: 20 results in the US, 24 in the UK"})
 
 
 class CategoryProductsSchema(_ListingSchema):
     category = CategoryRefField(metadata={
         "description": "category id (e.g. 248) or a temu.com category link"})
+    page = PageField(max_page=MAX_CATEGORY_PAGE, metadata={
+        "description": f"page of 40 results (1-{MAX_CATEGORY_PAGE})"})
 
 
 class ProductSchema(BaseSchema):
