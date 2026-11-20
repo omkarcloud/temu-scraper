@@ -18,10 +18,10 @@ Temu Scraper is a **free and open-source** scraper that gets you **unlimited** d
   "link": "https://www.temu.com/4pcs--beads-beaded-bracelet-set-elegant-handmade-hand-string-jewelry-accessory-g-601099537773480.html",
   "item_number": "DV51617",
   "is_available": true,
-  "pricing": { "price": 2.57, "max_price": null, "list_price": 19.54, "discount_percent": 87, "currency": "USD" },
+  "pricing": { "price": 2.76, "max_price": null, "list_price": 16.77, "discount_percent": 84, "currency": "USD" },
   "sold_count": 100000,
   "rating": 4.9,
-  "review_count": 3584,
+  "review_count": 3582,
   "category": { "id": "426", "name": "Women's Jewelry", "link": "https://www.temu.com/category.html?opt_id=426" },
   "images": [
     { "link": "https://img.kwcdn.com/product/Fancyalgo/VirtualModelMatting/a147b69e0ed77aa6904fda086bce0678.jpg", "width": 1000, "height": 1000 }
@@ -29,14 +29,14 @@ Temu Scraper is a **free and open-source** scraper that gets you **unlimited** d
   "video": { "link": "https://goods-vod.kwcdn.com/goods-video/413465e99920ea731558e7dfff78c51464f9e34a.f30.mp4", "thumbnail": "https://img.kwcdn.com/product/9dc464208de77ef23f8f9a30e1c4d8cb3740f45d.goods.000001.jpeg", "width": 720, "height": 720 },
   "attributes": [{ "name": "Plating", "values": ["KC Golden Plated"] }, { "name": "Style", "values": ["Vintage", "Elegant"] }],
   "variants": [
-    { "id": "17592305566829", "options": [{ "name": "Size", "value": "One-size" }], "price": 2.57, "list_price": 19.54, "discount_percent": 87, "stock": 501, "sold_count": 243089 }
+    { "id": "17592305566829", "options": [{ "name": "Size", "value": "One-size" }], "price": 2.76, "list_price": 16.77, "discount_percent": 84, "stock": 461, "sold_count": 243131 }
   ],
-  "shipping": { "title": "Free shipping for this item", "options": [{ "summary": "Fastest delivery in 8 days", "cost": "Free on all orders", "delivery_time": "Nov 3-16" }] },
-  "returns": { "summary": "Free returns within 90 days of purchase" },
-  "store": { "id": "45456903367", "name": "SINDLAN", "rating": 4.8, "review_count": 64349, "sold_count": 1000000, "follower_count": 4900, "badge": "Star store" },
-  "review_tags": [{ "name": "Well Made", "count": 391 }, { "name": "Super Cute", "count": 325 }],
+  "shipping": { "title": "Free shipping for this item", "options": [{ "summary": "Fastest delivery in 8 days", "cost": "Free on all orders", "delivery_time": "Nov 28-Dec 11" }] },
+  "returns": { "summary": "Extended free holiday returns until Jan 31 or within 90 days of purchase" },
+  "store": { "id": "45456903367", "name": "SINDLAN", "rating": 4.8, "review_count": 65795, "sold_count": 1000000, "follower_count": 4900, "badge": "Star store" },
+  "review_tags": [{ "name": "Well Made", "count": 390 }, { "name": "Super Cute", "count": 325 }],
   "reviews": [
-    { "rating": 5, "text": "comfortable to wear,, super cute well made these are so cute. Love them. You can put them all together...", "date": "2024-07-18", "author": "Ellen Propp", "author_country": "United States" }
+    { "rating": 5, "text": "love these pearl bracelets. so cute & stylish. will definitely buy more for self and for gifting. Highly recommend.", "date": "2025-04-19", "author": "bg***on", "author_country": "United States" }
   ]
 }
 ```
@@ -71,16 +71,16 @@ curl "http://localhost:8000/products/details?product=601099537773480"
   "link": "https://www.temu.com/4pcs--beads-beaded-bracelet-set-elegant-handmade-hand-string-jewelry-accessory-g-601099537773480.html",
   "item_number": "DV51617",
   "is_available": true,
-  "pricing": { "price": 2.57, "max_price": null, "list_price": 4.24, "discount_percent": 39, "currency": "USD" },
+  "pricing": { "price": 2.76, "max_price": null, "list_price": 16.77, "discount_percent": 84, "currency": "USD" },
   "sold_count": 100000,
   "rating": 4.9,
-  "review_count": 3584,
+  "review_count": 3582,
   "category": { "id": "426", "name": "Women's Jewelry" },
   "variants": [
-    { "id": "17592305566829", "options": [{ "name": "Size", "value": "One-size" }], "price": 2.57, "stock": 501, "sold_count": 243089 }
+    { "id": "17592305566829", "options": [{ "name": "Size", "value": "One-size" }], "price": 2.76, "stock": 461, "sold_count": 243131 }
   ],
-  "shipping": { "title": "Free shipping for this item", "options": [{ "summary": "Fastest delivery in 8 days", "delivery_time": "Nov 3-16" }] },
-  "store": { "id": "45456903367", "name": "SINDLAN", "rating": 4.8, "review_count": 64349, "badge": "Star store" }
+  "shipping": { "title": "Free shipping for this item", "options": [{ "summary": "Fastest delivery in 8 days", "delivery_time": "Nov 28-Dec 11" }] },
+  "store": { "id": "45456903367", "name": "SINDLAN", "rating": 4.8, "review_count": 65795, "badge": "Star store" }
 }
 ```
 
