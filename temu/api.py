@@ -9,12 +9,12 @@ the schema's loaded kwargs). Caching happens here (tofler/api.py pattern):
     report the listing's total pages without fetching page 1 again;
   * each endpoint caches its full response under its own namespace.
 """
-from cache import cached_call
+from cache import DontCache, cached_call
 from temu import cache_config as ttl
 from temu import fetch, parsers
-from temu.fetch import REVIEWS_PAGE_SIZE, page_size
+from temu.fetch import IMAGE_PAGE_SIZE, REVIEWS_PAGE_SIZE, page_size
 from temu.refs import category_link, filter_items, store_link
-from temu.schemas import MAX_CATEGORY_PAGE, MAX_REVIEWS_PAGE, MAX_SEARCH_PAGE
+from temu.schemas import MAX_CATEGORY_PAGE, MAX_IMAGE_SEARCH_PAGE, MAX_REVIEWS_PAGE, MAX_SEARCH_PAGE
 
 MAX_PAGE = {"search": MAX_SEARCH_PAGE, "category": MAX_CATEGORY_PAGE}
 
@@ -132,6 +132,38 @@ def _category_products(category, sort, min_price, max_price, min_rating, local_w
 
 def categories_products(**data):
     return cached_call("temu.category_products", data, _category_products, ttl.CATEGORY_PRODUCTS_CACHE)
+
+
+# ---- search by image ----------------------------------------------------------------------
+
+def _search_by_image(image, country, page):
+    """Products that look like the picture (Temu's "Find similar" list):
+    the picture is downloaded and re-encoded here, the box has Temu's page
+    post the search (temu/fetch.py). Page N drops what pages 1..N-1 of the
+    same box visit already showed."""
+    body, earlier = fetch.fetch_image_search(fetch.search_picture(image), page, country)
+    results, has_next = [], False
+    if body is not None:
+        parsed = parsers.parse_search_api(body)
+        seen = set()
+        for earlier_body in earlier:
+            seen.update(card["id"] for card in parsers.parse_search_api(earlier_body)["results"])
+        results = [card for card in parsed["results"] if card["id"] not in seen]
+        has_next = parsed["has_next"] and page < MAX_IMAGE_SEARCH_PAGE
+    out = {
+        "image": image,
+        "country": country,
+        "results": results,
+        "pagination": {"page": page, "items_per_page": IMAGE_PAGE_SIZE, "has_next": has_next,
+                       "total_pages": None, "total_count": None},
+    }
+    # an empty first page may be a transient refusal Temu answers as "nothing
+    # found": not kept for the cache's hour
+    return DontCache(out) if page == 1 and not results else out
+
+
+def products_search_by_image(**data):
+    return cached_call("temu.search_by_image", data, _search_by_image, ttl.IMAGE_SEARCH_CACHE)
 
 
 # ---- categories ---------------------------------------------------------------------------

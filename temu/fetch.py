@@ -44,8 +44,21 @@ never contacts Temu from its own IP for these pages (the identity lives on
 its exit).
 
 The browser-box pages (search / category page N > 1, product and store
-reviews) go through browser_client.fetch("temu-pages") on sticky exits from an ExitPool
+reviews, search by image) go through browser_client.fetch("temu-pages") on sticky exits from an ExitPool
 per market; a refusal rotates that exit.
+
+Search by image (box 2026-11-20): the product page's "Find similar" dialog
+posts POST /api/poppy/v1/find_sim (scene window_find_sim_img) with the photo
+itself as imgSearchBytes: base64 of a JPEG 500 px wide at quality 70 (Temu's
+GOODS_MIDDLE resize of the photo). Any picture works, not only Temu's own (a
+laptop photo from another shop answered laptops), but the size matters: the
+same photos at 256 px got answers with no products. The call is signed in
+the page like every /api/poppy/* call, so the box opens the home page and
+has the page's own API client post it (recipes/temu_pages.py action
+"post"); the picture is downloaded and re-encoded here, never on the box.
+20 products per call; Temu pages the list by its list id (a new id on
+offset 20 answered 18 of page 1's 20 again), so page N is N calls on one
+list id in one box visit.
 
 Store reviews: the store page's own review calls in a box browser (first
 page only: a guest gets Temu's sign-in modal on the store page). Temu's open
@@ -79,6 +92,7 @@ import config
 import identity_pool
 from browser_client import BoxRefused, BoxUnavailable
 from scraper_errors import BadRequest, Blocked, NotFound, UpstreamError
+from scraper_utils import pictures
 from temu import parsers
 from temu.refs import DEFAULT_MARKET, MARKETS, SITE, category_page_path
 
@@ -109,6 +123,21 @@ REVIEWS_LIST_CALL = "/api/bg/engels/reviews/list?"
 REVIEWS_INFO_CALL = "/api/bg/engels/reviews/info?"
 STORE_REVIEWS_LIST_CALL = "/api/bg/engels/reviews/mall/list?"
 STORE_REVIEWS_INFO_CALL = "/api/bg/engels/reviews/mall/info?"
+IMAGE_SEARCH_CALL = "/api/poppy/v1/find_sim?"
+
+# Search by image: the "Find similar" dialog's call (see the module doc).
+IMAGE_SCENE = "window_find_sim_img"
+IMAGE_PAGE_SIZE = 20
+IMAGE_WIDTH = 500                 # Temu's own resize of the photo (GOODS_MIDDLE: resizeWidth 500, quality 70)
+IMAGE_QUALITY = 70
+IMAGE_PAGE_SN = 10032             # the product page, where the dialog lives
+IMAGE_PAGE_EL_SN = 222268         # the dialog's list
+# The plain-client fallback of the picture download names us (some hosts
+# refuse browser TLS and serve a named client; scraper_utils/pictures.py).
+PICTURE_USER_AGENT = "TemuScraper/1.0 (https://temu-scraper.omkar.cloud; picture download for a search by image)"
+# The picture rides in the box call's body (browser_worker/server.py reads up
+# to 1 MB): a typical photo is 20-60 KB at 500 px; only an extreme strip is refused.
+MAX_PICTURE_B64 = 900_000
 
 
 class TemuUpstreamError(UpstreamError):
@@ -228,6 +257,55 @@ class _Identity(identity_pool.Identity):
             pass
 
 
+# Temu at times refuses EVERY new guest identity for hours: the first search
+# of a fresh guest goes to its captcha and product pages answer 54001, on
+# every exit tier and on both boxes (2026-11-18 from ~08:30 UTC: 0 of 28
+# mints on an idle box, 14 datacenter + 14 residential exits). A call then
+# ran MAX_RETRIES x TEMU_MINT_ATTEMPTS = 12 mints, each loading the home
+# page and a search through the proxy, before its 502: 13 GB of datacenter
+# traffic in three hours for nothing, and callers waited minutes. So after
+# TEMU_MINT_REFUSALS refused mints in a row, minting pauses: one mint per
+# TEMU_MINT_PAUSE seconds is let through as a probe, every other call is
+# refused at once, and the first trusted identity ends the pause.
+_refusals_lock = threading.Lock()
+_refusals = {"streak": 0, "next_probe": 0.0}
+
+
+def _mint_allowed():
+    """False while Temu is refusing every identity and no probe is due."""
+    with _refusals_lock:
+        if _refusals["streak"] < config.TEMU_MINT_REFUSALS:
+            return True
+        now = time.time()
+        if now < _refusals["next_probe"]:
+            return False
+        _refusals["next_probe"] = now + config.TEMU_MINT_PAUSE     # this caller is the probe
+        return True
+
+
+def _probe_not_run():
+    """The box could not run the mint, so Temu was never asked: while minting
+    is paused the next caller is the probe, instead of TEMU_MINT_PAUSE more
+    seconds of refusals on the word of a probe that did not happen."""
+    with _refusals_lock:
+        if _refusals["streak"] >= config.TEMU_MINT_REFUSALS:
+            _refusals["next_probe"] = 0.0
+
+
+def _note_mint(trusted):
+    with _refusals_lock:
+        if trusted:
+            if _refusals["streak"] >= config.TEMU_MINT_REFUSALS:
+                print("temu: a new guest identity was trusted again; minting resumes")
+            _refusals["streak"], _refusals["next_probe"] = 0, 0.0
+            return
+        _refusals["streak"] += 1
+        if _refusals["streak"] == config.TEMU_MINT_REFUSALS:
+            _refusals["next_probe"] = time.time() + config.TEMU_MINT_PAUSE
+            print(f"temu: {config.TEMU_MINT_REFUSALS} identity mints refused in a row; "
+                  f"one mint per {config.TEMU_MINT_PAUSE} s until Temu trusts one again")
+
+
 def _mint(market, hint=None):
     """A trusted guest identity for `market` on a fresh sticky exit (the box
     verifies trust before answering); TEMU_MINT_ATTEMPTS exits. The pool's
@@ -235,6 +313,9 @@ def _mint(market, hint=None):
     last = None
     started = time.monotonic()
     for attempt in range(1, config.TEMU_MINT_ATTEMPTS + 1):
+        if not _mint_allowed():
+            raise TemuBlocked("Temu is refusing every new guest identity right now; retry in a few minutes"
+                              + (f" (last: {last})" if last else ""))
         # None = this machine's own IP, valid only where the browser runs on
         # the same machine as this code (the open-source kit); GKE always
         # sends a sticky exit (config.TEMU_EXIT), since the box's IP is not
@@ -243,13 +324,16 @@ def _mint(market, hint=None):
         try:
             ident = browser_client.mint(BOX_SITE, proxy=proxy, variant=market)
         except BoxUnavailable as e:
+            _probe_not_run()
             raise TemuBoxDown(f"browser box unavailable for the identity mint: {e}")
         except BoxRefused as e:
             last = e
+            _note_mint(False)
             continue
         if not ident.get("cookies") or not ident.get("user_agent"):
             last = RuntimeError("the box answered without cookies / user agent")
             continue
+        _note_mint(True)
         print(f"temu: minted a {market} identity in {time.monotonic() - started:.1f}s "
               f"(attempt {attempt}, exit {ident.get('exit_ip')})")
         return _Identity(market, proxy, ident)
@@ -392,11 +476,12 @@ def _pool(market):
         return pool
 
 
-def _box_capture(url, market, capture, action, times):
-    """Navigate `url` in a trusted box browser, run the action plan and
-    return the captured responses [{url, status, method, post, body}]."""
+def _box_capture(url, market, capture, action, times, **extra):
+    """Navigate `url` in a trusted box browser, run the action plan (`extra`
+    joins it: the "post" action's calls and picture) and return the captured
+    responses [{url, status, method, post, body}]."""
     pool = _pool(market)
-    plan = json.dumps({"capture": capture, "action": action, "times": times})
+    plan = json.dumps({"capture": capture, "action": action, "times": times, **extra})
     last = None
     for _ in range(BOX_ATTEMPTS):
         try:
@@ -471,6 +556,56 @@ def fetch_listing_page(kind, ref, page, filter_items="", market=DEFAULT_MARKET):
     if body is None or body.get("success") is False:
         raise TemuBlocked(f"Temu refused the page-{page} call ({(body or {}).get('error_code')})")
     return body, [b or {} for b in bodies[:page - 2]]
+
+
+def search_picture(link):
+    """The caller's picture as Temu's page sends it: downloaded here (never on
+    the box), upright, 500 px wide (small photos are scaled up: at 256 px Temu
+    answered no products), JPEG quality 70 -> base64. A link that is not a
+    usable picture -> TemuBadRequest."""
+    try:
+        jpeg = pictures.fetch_jpeg(link, user_agent=PICTURE_USER_AGENT, width=IMAGE_WIDTH, quality=IMAGE_QUALITY)
+    except pictures.PictureError as e:
+        raise TemuBadRequest(str(e))
+    picture = base64.b64encode(jpeg).decode()
+    if len(picture) > MAX_PICTURE_B64:
+        raise TemuBadRequest("image is too tall for a search by image: crop it to the product")
+    return picture
+
+
+def image_search_calls(page, list_id):
+    """The find_sim calls for pages 1..`page` of one picture's list."""
+    path = f"/api/poppy/v1/find_sim?scene={IMAGE_SCENE}"
+    return [[path, {"offset": n * IMAGE_PAGE_SIZE, "pageSize": IMAGE_PAGE_SIZE, "scene": IMAGE_SCENE,
+                    "listId": list_id, "pageSn": IMAGE_PAGE_SN, "pageElSn": IMAGE_PAGE_EL_SN,
+                    "imgSearchBytes": "<picture>"}] for n in range(page)]
+
+
+def fetch_image_search(picture, page, market=DEFAULT_MARKET):
+    """Search by image page N (`picture` = search_picture's base64): the box
+    opens the home page and the page's own client posts find_sim for pages
+    1..N on one list id -> (body of page N, or None when the list ended
+    before it; the bodies of the pages before it).
+
+    The box stops after an answer with has_more false, so fewer answers than
+    pages is the end of the list when the last one says so; otherwise the
+    box failed (TemuBlocked, retryable)."""
+    calls = image_search_calls(page, os.urandom(16).hex())
+    captured = _box_capture(SITE + "/", market, [IMAGE_SEARCH_CALL], "post", 0, calls=calls, picture=picture)
+    loads = {}
+    for item in captured:
+        if IMAGE_SEARCH_CALL in item.get("url", ""):
+            loads.setdefault(_post_offset(item), item)      # one per offset: a retried call can answer twice
+    bodies = [_json_body(loads[offset]) for offset in sorted(loads) if offset >= 0]
+    if len(bodies) < page:
+        last = bodies[-1] if bodies else None
+        if last is not None and last.get("success") is not False and not (last.get("result") or {}).get("has_more"):
+            return None, [b or {} for b in bodies]
+        raise TemuBlocked(f"the browser box loaded {len(bodies)} of the {page} image-search pages")
+    body = bodies[page - 1]
+    if body is None or body.get("success") is False:
+        raise TemuBlocked(f"Temu refused the image search ({(body or {}).get('error_code')})")
+    return body, [b or {} for b in bodies[:page - 1]]
 
 
 def fetch_reviews(goods_id, page, market=DEFAULT_MARKET):

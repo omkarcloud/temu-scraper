@@ -11,6 +11,8 @@ from datetime import timedelta
 PRODUCT_CACHE = timedelta(hours=3)
 # Search results reorder with sales and ads within hours.
 SEARCH_CACHE = timedelta(hours=1)
+# Search by image: the same ranking signals as search (keyed on the picture link).
+IMAGE_SEARCH_CACHE = timedelta(hours=1)
 # Category listings: same ranking signals as search.
 CATEGORY_PRODUCTS_CACHE = timedelta(hours=1)
 # The category tree changes a few times a year.

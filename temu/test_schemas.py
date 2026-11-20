@@ -109,3 +109,24 @@ def test_store_reviews_schema():
     assert "Unknown field" in " ".join(errs["page"])
     errs = errors(schemas.StoreReviewsSchema, {"store": "abc"})
     assert "store id" in " ".join(errs["store"])
+
+
+# ---- products/search-by-image ------------------------------------------------------------
+
+def test_image_search_schema():
+    link = "https://img.kwcdn.com/product/fancy/89d07051-7673-4f3f-9366-0f00498e0bf1.jpg"
+    assert schemas.ImageSearchSchema().load({"image": link}) == {"image": link, "country": "us", "page": 1}
+    assert schemas.ImageSearchSchema().load({"image": " example.com/a.png ", "country": "gb", "page": "3"}) == \
+        {"image": "https://example.com/a.png", "country": "gb", "page": 3}
+
+
+@pytest.mark.parametrize("data,field,message", [
+    ({}, "image", "required"),
+    ({"image": "data:image/png;base64,iVBORw0"}, "image", "not a data: URI"),
+    ({"image": "ftp://example.com/a.jpg"}, "image", "http(s)"),
+    ({"image": "localhost/a.jpg"}, "image", "picture link"),
+    ({"image": "https://example.com/a.jpg", "page": "11"}, "page", "less than or equal to 10"),
+    ({"image": "https://example.com/a.jpg", "country": "de"}, "country", "Must be one of"),
+])
+def test_image_search_schema_rejects(data, field, message):
+    assert message in " ".join(errors(schemas.ImageSearchSchema, data)[field])

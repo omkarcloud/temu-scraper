@@ -384,3 +384,15 @@ def test_value_helpers():
     assert P.snake({"goodsId": 1, "HWRatio": 2, "priceInfo": {"marketPrice": 3}}) == \
         {"goods_id": 1, "hw_ratio": 2, "price_info": {"market_price": 3}}
     assert P.total_pages_for(200, 10) == 20 and P.total_pages_for(0, 10) == 0
+
+
+def test_image_search_answer_parses_like_search():
+    """A real POST /api/poppy/v1/find_sim answer (box 2026-11-20: our own 500 px
+    photo of earbuds) has the search API's shape: 20 cards, more to load."""
+    page = P.parse_search_api(js("image_search_page1.json"))
+    assert len(page["results"]) == 20 and page["has_next"] is True
+    first = page["results"][0]
+    assert first["id"] == "601104548227368" and first["price"] == 5.39 and first["list_price"] == 49.99
+    assert first["currency"] == "USD" and first["is_sponsored"] is True
+    assert first["link"].startswith("https://www.temu.com/") and first["image"].startswith("https://img.kwcdn.com/")
+    assert all(card["name"] and card["price"] for card in page["results"])

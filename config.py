@@ -45,3 +45,8 @@ def temu_proxy(market="us"):
 TEMU_MINT_AHEAD = True
 TEMU_MINT_AHEAD_AT = 3
 TEMU_MINT_WAIT = 60
+
+
+# ---- added by the sync: defaults for a direct run ----
+TEMU_MINT_PAUSE = 300
+TEMU_MINT_REFUSALS = 8

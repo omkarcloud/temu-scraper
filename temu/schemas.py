@@ -14,6 +14,7 @@ Listing filters map to Temu's own filter_items tokens (temu/refs.py).
 from marshmallow import ValidationError, validates_schema
 
 from schema_fields import BaseSchema, ChoiceField, Flag, PageField, Price, QueryField, RefField
+from scraper_utils import pictures
 from temu import refs
 
 # Temu's listings stop at 360 results (totalPage 9 of its nominal 40). A page
@@ -25,6 +26,10 @@ MAX_SEARCH_PAGE = 18
 MAX_CATEGORY_PAGE = 9
 # The reviews modal loads 10 per page, one scroll per page on the box.
 MAX_REVIEWS_PAGE = 10
+# Search by image: 20 per page, page N = N signed calls in one box visit
+# (recipes/temu_pages.py MAX_CALLS). Box 2026-11-20: page 10 answered 20
+# products none of pages 1-9 had (one list id across the 10 calls).
+MAX_IMAGE_SEARCH_PAGE = 10
 
 
 class ProductRefField(RefField):
@@ -37,6 +42,10 @@ class CategoryRefField(RefField):
 
 class StoreRefField(RefField):
     resolver = staticmethod(refs.resolve_store)
+
+
+class ImageLinkField(RefField):
+    resolver = staticmethod(pictures.resolve_link)
 
 
 def country_field():
@@ -76,6 +85,14 @@ class CategoryProductsSchema(_ListingSchema):
         "description": "category id (e.g. 248) or a temu.com category link"})
     page = PageField(max_page=MAX_CATEGORY_PAGE, metadata={
         "description": f"page of 40 results (1-{MAX_CATEGORY_PAGE})"})
+
+
+class ImageSearchSchema(BaseSchema):
+    image = ImageLinkField(metadata={
+        "description": "link to a picture (JPEG, PNG, WEBP or GIF), e.g. a product photo from any shop"})
+    country = country_field()
+    page = PageField(max_page=MAX_IMAGE_SEARCH_PAGE, metadata={
+        "description": f"page of 20 results (1-{MAX_IMAGE_SEARCH_PAGE})"})
 
 
 class ProductSchema(BaseSchema):

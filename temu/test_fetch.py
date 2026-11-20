@@ -189,3 +189,146 @@ def test_refused_listing_call(box):
     box["answer"] = [load(20, success=False)]
     with pytest.raises(fetch.TemuBlocked):
         fetch.fetch_listing_page("search", "socks", 2)
+
+
+# ---- the pause while Temu refuses every new identity -----------------------------------
+
+@pytest.fixture
+def refusing_box(monkeypatch):
+    """The box refuses every mint; -> the list of mint calls it received."""
+    calls = []
+
+    def mint(site, proxy=None, variant=""):
+        calls.append(proxy)
+        if calls.trusted:
+            return {"cookies": [{"name": "api_uid", "value": "x"}], "user_agent": "UA", "exit_ip": "1.2.3.4"}
+        raise fetch.BoxRefused("temu/mint: 502 temu: Temu did not server-render the verification search")
+
+    class Calls(list):
+        trusted = False
+    calls = Calls()
+    monkeypatch.setattr(fetch.browser_client, "mint", mint)
+    monkeypatch.setattr(fetch.config, "temu_proxy", lambda market="us": "http://exit")
+    monkeypatch.setattr(fetch.config, "TEMU_MINT_ATTEMPTS", 4)
+    monkeypatch.setattr(fetch.config, "TEMU_MINT_REFUSALS", 8)
+    monkeypatch.setattr(fetch.config, "TEMU_MINT_PAUSE", 300)
+    monkeypatch.setattr(fetch, "_refusals", {"streak": 0, "next_probe": 0.0})
+    return calls
+
+
+def test_minting_pauses_after_a_run_of_refused_mints(refusing_box):
+    for _ in range(2):                                   # two requests' worth: 8 refused mints
+        with pytest.raises(fetch.TemuBlocked):
+            fetch._mint("us")
+    assert len(refusing_box) == 8
+    for _ in range(5):                                   # paused: refused at once, the box is not called
+        with pytest.raises(fetch.TemuBlocked, match="refusing every new guest identity"):
+            fetch._mint("us")
+    assert len(refusing_box) == 8
+
+
+def test_one_probe_mint_per_pause_and_a_trusted_identity_ends_it(refusing_box, monkeypatch):
+    for _ in range(2):
+        with pytest.raises(fetch.TemuBlocked):
+            fetch._mint("us")
+    now = fetch.time.time()
+    monkeypatch.setattr(fetch.time, "time", lambda: now + 301)
+    with pytest.raises(fetch.TemuBlocked):
+        fetch._mint("us")
+    assert len(refusing_box) == 9                        # one probe, refused: paused again
+    monkeypatch.setattr(fetch.time, "time", lambda: now + 602)
+    refusing_box.trusted = True
+    ident = fetch._mint("us")
+    ident.close()
+    assert len(refusing_box) == 10 and fetch._refusals["streak"] == 0
+    fetch._mint("us").close()                            # minting is back to normal
+    assert len(refusing_box) == 11
+
+
+def test_a_probe_the_box_could_not_run_is_not_spent(refusing_box, monkeypatch):
+    for _ in range(2):
+        with pytest.raises(fetch.TemuBlocked):
+            fetch._mint("us")
+    now = fetch.time.time()
+    monkeypatch.setattr(fetch.time, "time", lambda: now + 301)
+
+    def box_down(site, proxy=None, variant=""):
+        raise fetch.BoxUnavailable("the box is busy")
+    monkeypatch.setattr(fetch.browser_client, "mint", box_down)
+    with pytest.raises(fetch.TemuBoxDown):               # the probe never reached Temu
+        fetch._mint("us")
+    monkeypatch.setattr(fetch.browser_client, "mint",
+                        lambda site, proxy=None, variant="": {"cookies": [{"name": "api_uid", "value": "x"}],
+                                                              "user_agent": "UA", "exit_ip": "1.2.3.4"})
+    fetch._mint("us").close()                            # so the next call probes, without another pause
+    assert fetch._refusals["streak"] == 0
+
+
+# ---- search by image ----------------------------------------------------------------------
+
+def sim_load(offset, n=20, has_more=True, success=True):
+    body = {"success": success, "result": {"has_more": has_more,
+                                           "data": {"goods_list": [{"goods_id": offset * 1000 + i} for i in range(n)]}}}
+    post = fetch.json.dumps({"offset": offset, "pageSize": 20, "imgSearchBytes": "AAAA"})
+    return {"url": "https://www.temu.com/api/poppy/v1/find_sim?scene=window_find_sim_img", "status": 200,
+            "method": "POST", "post": post, "body": fetch.json.dumps(body)}
+
+
+@pytest.fixture
+def image_box(monkeypatch):
+    calls = {}
+
+    def fake_capture(url, market, capture, action, times, **extra):
+        calls.update(url=url, market=market, capture=capture, action=action, times=times, **extra)
+        return calls["answer"]
+
+    monkeypatch.setattr(fetch, "_box_capture", fake_capture)
+    return calls
+
+
+def test_image_search_page_n_is_n_calls_on_one_list_id(image_box):
+    image_box["answer"] = [sim_load(40), sim_load(0), sim_load(20), sim_load(20)]     # any order; a retried call
+    body, earlier = fetch.fetch_image_search("PICTURE", 3)
+    assert image_box["action"] == "post" and image_box["url"] == fetch.SITE + "/"
+    assert image_box["picture"] == "PICTURE" and image_box["capture"] == [fetch.IMAGE_SEARCH_CALL]
+    calls = image_box["calls"]
+    assert [c[1]["offset"] for c in calls] == [0, 20, 40]
+    assert len({c[1]["listId"] for c in calls}) == 1 and len(calls[0][1]["listId"]) == 32
+    assert all(c[0] == "/api/poppy/v1/find_sim?scene=window_find_sim_img" for c in calls)
+    assert all(c[1]["imgSearchBytes"] == "<picture>" and c[1]["scene"] == "window_find_sim_img" for c in calls)
+    assert body["result"]["data"]["goods_list"][0]["goods_id"] == 40000
+    assert [e["result"]["data"]["goods_list"][0]["goods_id"] for e in earlier] == [0, 20000]
+
+
+def test_image_search_list_ended_before_the_page(image_box):
+    image_box["answer"] = [sim_load(0, n=7, has_more=False)]
+    body, earlier = fetch.fetch_image_search("PICTURE", 2)
+    assert body is None and len(earlier) == 1
+
+
+def test_image_search_box_short_or_refused_is_blocked(image_box):
+    image_box["answer"] = [sim_load(0)]                                 # has_more, yet page 2 never answered
+    with pytest.raises(fetch.TemuBlocked):
+        fetch.fetch_image_search("PICTURE", 2)
+    image_box["answer"] = [sim_load(0, success=False)]
+    with pytest.raises(fetch.TemuBlocked):
+        fetch.fetch_image_search("PICTURE", 1)
+
+
+def test_search_picture_is_temus_own_size(monkeypatch):
+    import io
+
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGBA", (256, 128), (255, 0, 0, 0)).save(buf, "PNG")       # small, transparent
+    monkeypatch.setattr(fetch.pictures, "download", lambda link, user_agent=None, max_bytes=None: buf.getvalue())
+    jpeg = fetch.base64.b64decode(fetch.search_picture("https://example.com/a.png"))
+    im = Image.open(io.BytesIO(jpeg))
+    assert im.format == "JPEG" and im.size == (500, 250)               # scaled UP to 500 px wide
+    assert im.getpixel((10, 10))[0] > 240 and im.getpixel((10, 10))[1] > 240     # transparency -> white
+
+    def refuse(link, user_agent=None, max_bytes=None):
+        raise fetch.pictures.PictureError("image could not be used: its server answered HTTP 404")
+    monkeypatch.setattr(fetch.pictures, "download", refuse)
+    with pytest.raises(fetch.TemuBadRequest, match="HTTP 404"):
+        fetch.search_picture("https://example.com/gone.png")
