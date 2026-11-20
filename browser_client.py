@@ -8,8 +8,8 @@ one search. Its cookies and user agent are handed back, and from then on the
 product, search and category pages are plain HTTP on the same connection
 (TEMU_PROXY, or your own IP when it is unset).
 
-Search / category pages after the first, product reviews and store reviews
-only come from Temu's in-page calls, which carry a token Temu's scripts sign
+Search / category pages after the first, product reviews, store reviews and
+search by image only come from Temu's in-page calls, which carry a token Temu's scripts sign
 in the page. For those, `ExitPool.fetch_any()` keeps one warm Chrome per
 storefront, opens the page, clicks "See more" / "See all reviews" (or
 scrolls the reviews dialog) and returns the raw JSON of those calls.
@@ -276,6 +276,99 @@ def _scroll_reviews_modal(page):
     }""", isolated_context=False)
 
 
+# Search by image ("post"): Temu's own API client in the page puts the signed
+# anti-content token on whatever it posts; the script below asks it to post
+# temu/fetch.py's calls (POST /api/poppy/v1/find_sim with the picture) in
+# order. It uses the client the page built itself and never makes webpack build
+# a module whose dependencies are not loaded (Temu's require keeps a module
+# that failed half-built, which would break the page). The same script as the
+# hosted service's browser recipe.
+MAX_CALLS = 10
+POST_JS = r"""async ([calls, picture]) => {
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  try {
+    for (let i = 0; i < 80; i++) {          // the runtime hooks the array's push once it has loaded
+      const arr = self.__LOADABLE_LOADED_CHUNKS__;
+      if (arr && arr.push !== Array.prototype.push) break;
+      await sleep(250);
+    }
+    let req = null;
+    (self.__LOADABLE_LOADED_CHUNKS__ = self.__LOADABLE_LOADED_CHUNKS__ || [])
+      .push([[`gs${Date.now()}${Math.random()}`], {}, r => { req = r; }]);
+    if (!req || !req.m || !req.c) return {error: `no webpack runtime on ${location.pathname}`};
+    const src = f => { try { return Function.prototype.toString.call(f); } catch (e) { return ''; } };
+    const ids = Object.keys(req.m).filter(k => {
+      const s = src(req.m[k]);
+      return s.includes('/api/poppy/v1/mall_home_recommend') && s.includes('useNativeAntiToken');
+    });
+    if (!ids.length) return {error: 'the signed API client was not found in the page'};
+    const postOf = exports => {
+      if (!exports) return null;
+      for (const k of Object.keys(exports)) {
+        let v; try { v = exports[k]; } catch (e) { continue; }
+        if (typeof v === 'function' && /useNativeAntiToken/.test(src(v))) return v;
+      }
+      return null;
+    };
+    const built = () => {                   // the page's own instance, if it has built one
+      for (const id of ids) { const m = req.c[id]; if (m && m.loaded) { const p = postOf(m.exports); if (p) return p; } }
+      return null;
+    };
+    const missing = id => {                 // modules `id` needs that are not loaded, all the way down
+      const out = [], seen = new Set(), queue = [id];
+      while (queue.length && seen.size < 5000) {
+        const m = queue.shift();
+        if (seen.has(m)) continue;
+        seen.add(m);
+        if (req.c[m]) { if (req.c[m].loaded) continue; out.push(m); continue; }   // half-built: unusable
+        if (!req.m[m]) { out.push(m); continue; }
+        const s = src(req.m[m]);
+        const params = (s.match(/^\s*(?:function\s*[\w$]*\s*)?\(([^)]*)\)/) || [])[1];
+        const name = params && (params.split(',')[2] || '').trim();
+        if (!name) continue;
+        const re = new RegExp('(?<![\\w$.])' + name.replace(/\$/g, '\\$') + '\\((\\d+)\\)', 'g');
+        for (const mm of s.matchAll(re)) queue.push(mm[1]);
+      }
+      return out;
+    };
+    let post = built(), how = 'page';
+    for (let i = 0; !post && i < 30; i++) {     // up to 15 s for the page to build it
+      if (i % 6 === 1) window.scrollBy(0, 500 + Math.floor(Math.random() * 300));
+      await sleep(500);
+      post = built();
+    }
+    if (!post) {
+      const id = ids.find(k => !req.c[k] && missing(k).length === 0);
+      if (!id) return {error: `the signed API client is not loaded on this page (missing ${missing(ids[0]).slice(0, 5).join(',')})`};
+      post = postOf(req(id));
+      how = 'built';
+      if (!post) return {error: 'the signed API client exports no post function'};
+    }
+    window.scrollTo(0, 0);
+    let posted = 0, refused = null;
+    for (const [url, params] of calls) {
+      const body = JSON.parse(JSON.stringify(params));
+      for (const k of Object.keys(body)) if (body[k] === '<picture>') body[k] = picture;
+      try {
+        const res = await post({url, params: body, config: {useAntiToken: true, useResponseCamel: false}});
+        posted++;
+        if (res && res.success === false) { refused = res.error_code || 'success false'; break; }
+        if (!res || !(res.result && res.result.has_more)) break;
+      } catch (e) {                          // axios: a 4xx / 5xx answer
+        posted++;
+        const r = e && e.response;
+        refused = (r && r.data && r.data.error_code) || (r && r.status) || String(e).slice(0, 120);
+        break;
+      }
+    }
+    return {posted, refused, client: how};
+  } catch (e) {
+    return {error: 'page script: ' + String(e).slice(0, 200)};
+  }
+}"""
+# refusals of a signed call that burn the guest (captcha / refused / bad signature)
+REFUSED = {40001, 40002, 40003, 54001, 403, 429}
+
 def _run_plan(driver, url, referer, spec):
     """Open `url`, run the action plan, return the captured calls."""
     capture = [c for c in (spec.get("capture") or []) if isinstance(c, str) and c]
@@ -310,6 +403,24 @@ def _run_plan(driver, url, referer, spec):
                     break
                 if not driver.call(lambda page: _wait_more(page, state, before)):
                     break
+        elif action == "post":
+            calls = [c for c in (spec.get("calls") or []) if isinstance(c, list) and len(c) == 2
+                     and isinstance(c[0], str) and c[0].startswith("/api/") and isinstance(c[1], dict)][:MAX_CALLS]
+            if not calls:
+                raise BoxRefused("temu: action post needs calls [[/api/... path, params], ...]")
+            picture = spec.get("picture") if isinstance(spec.get("picture"), str) else ""
+            before = len(state["responses"])
+            try:
+                result = driver.call(lambda page: page.evaluate(POST_JS, [calls, picture], isolated_context=False),
+                                     timeout=60 + 15 * len(calls))
+            except Exception as e:
+                raise BoxRefused(f"temu: the page script failed ({type(e).__name__}: {str(e)[:160]})")
+            if (result or {}).get("error"):
+                raise BoxRefused(f"temu: {result['error']}")
+            if (result or {}).get("refused") in REFUSED:
+                raise BoxRefused(f"temu: Temu refused the signed call ({result['refused']}); the guest is burned")
+            posted = int((result or {}).get("posted") or 0)
+            driver.call(lambda page: _wait_more(page, state, before + posted - 1, seconds=5))
         if _challenged(driver.current_url):
             raise BoxRefused("temu: Temu challenged the page; the guest is burned")
         return driver.call(lambda page: _read(state))

@@ -93,6 +93,7 @@ def call(label, schema, impl, paginated=False):
 ENDPOINTS = [
     ("/products/details", schemas.ProductSchema, api.product_details, False),
     ("/products/search", schemas.SearchSchema, api.products_search, True),
+    ("/products/search-by-image", schemas.ImageSearchSchema, api.products_search_by_image, True),
     ("/products/reviews", schemas.ProductReviewsSchema, api.product_reviews, True),
     ("/categories/list", schemas.CategoriesListSchema, api.categories_list, False),
     ("/categories/products", schemas.CategoryProductsSchema, api.categories_products, True),

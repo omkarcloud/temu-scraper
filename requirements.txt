@@ -6,3 +6,4 @@ patchright
 psutil
 pyvirtualdisplay
 pytest
+pillow

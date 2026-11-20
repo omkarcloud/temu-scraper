@@ -84,16 +84,17 @@ curl "http://localhost:8000/products/details?product=601099537773480"
 }
 ```
 
-All 6 endpoints are now live at `http://localhost:8000`.
+All 7 endpoints are now live at `http://localhost:8000`.
 
 ## 📚 Endpoints
 
-6 endpoints cover everything you need.
+7 endpoints cover everything you need.
 
 | Endpoint | Path | Returns |
 |---|---|---|
 | Product Details | `/products/details` | Every variant's price and stock, sold counts, media, shipping and store |
-| Search Products | `/products/search` | 40 products per page, sortable, with price, rating and warehouse filters |
+| Search Products | `/products/search` | 20 products per page, sortable, with price, rating and warehouse filters |
+| Search By Image | `/products/search-by-image` | Products that look like any picture, 20 per page, with prices, sales and ratings |
 | Product Reviews | `/products/reviews` | 10 reviews per page with photos, videos and the variant bought |
 | Categories | `/categories/list` | All 34 top-level departments, or any category's subcategories |
 | Category Products | `/categories/products` | Any category's products, sortable, with price and rating filters |
